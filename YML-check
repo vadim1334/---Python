@@ -1,0 +1,94 @@
+импорт необходимых библиотек
+import requests  #для выполнения HTTP-запросов
+import pandas as pd  #для работы с данными в формате CSV
+from io import StringIO  #для преобразования строки в файлоподобный объект
+from xml.etree import ElementTree as ET  #для парсинга XML-данных
+
+#функция для проверки статуса URL
+def is_404(url):
+    try:
+        #отправляем HEAD-запрос к указанному URL
+        response = requests.head(url, allow_redirects=False, timeout=10)
+        
+        #проверяем статус код
+        if 200 <= response.status_code < 300:
+            return False  #ссылка рабочая
+        else:
+            return True   #ссылка битая (включая 404)
+    except requests.exceptions.RequestException:
+        return True  #считаем ссылку битой при ошибке
+        
+        
+  #загрузка фида по ссылке
+feed_url = 'some link'
+response = requests.get(feed_url)
+#проверка успешности загрузки фида
+if response.status_code != 200:
+    print(f"Не удалось загрузить фид. Статус код: {response.status_code}")
+    exit()
+
+feed_content = response.text.strip()
+
+#определение формата фида
+if feed_content.startswith('<'):  #если начинается с тега, считаем это XML
+    print("Фид является XML-файлом или YML-файлом, YML - это изотоп XML.")
+    
+    #парсинг XML
+    root = ET.fromstring(feed_content)
+    all_links = []
+    
+    #ищем все элементы с тегом <url> внутри <offer>
+    for offer in root.findall('.//offer'):
+        url_element = offer.find('url')
+        if url_element is not None and url_element.text:
+            all_links.append(url_element.text.strip())
+
+elif ',' in feed_content or ';' in feed_content:  #если есть разделители, считаем, что это CSV
+    print("Фид является CSV-файлом.")
+    
+    #конвертируем текст фида в DataFrame
+    data = StringIO(feed_content)
+    try:
+        df = pd.read_csv(data, sep=',')  #попробуем с запятой
+    except pd.errors.ParserError:
+        df = pd.read_csv(data, sep=';')  #если не работает, попробуем с точкой с запятой
+    
+    #ищем столбец с названием 'url' или 'link'
+    if 'url' in df.columns:
+        all_links = df['url'].dropna().str.strip().tolist()
+    elif 'link' in df.columns:
+        all_links = df['link'].dropna().str.strip().tolist()
+    else:
+        print("В фиде отсутствует столбец 'url' или 'link'.")
+        exit()
+
+else:  #если ничего не подходит, считаем, что это JSON
+    print("Фид является JSON-файлом.")
+    try:
+        feed_data = response.json()
+        all_links = [item['url'] for item in feed_data if 'url' in item]
+    except ValueError:
+        print("Не удалось определить формат фида.")
+        exit()      
+        
+        #удаление дубликатов
+all_links = list(set(all_links))
+print('Выводим ссылки из фида, чтобы убедиться, что функция выше работает:', all_links) #выводим ссылки из фида, чтобы убедиться, что функция выше работает
+
+#проверка cсылок на 404 ошибку
+broken_links = []
+total_links = len(all_links)
+for i, url in enumerate(all_links, start=1):
+    if is_broken_url(url):
+        broken_links.append(url)
+    #вывод прогресса
+    print(f"Проверено {i}/{total_links} ссылок", end='\r')
+
+#вывод результатов
+if broken_links:
+    print(f"\nНайдено битых ссылок: {len(broken_links)}")
+    print("Найдены следующие битые ссылки:")
+    for link in broken_links:
+        print(f"- {link}")
+else:
+    print("\nВсе ссылки работают корректно и содержат достаточное количество информации.")
